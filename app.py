@@ -38,7 +38,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- LÓGICA DE SCRAPING (El Cerebro Mejorado) ---
+# --- LÓGICA DE SCRAPING (Cerebro v3.0 - Precios Precisos) ---
 def buscar_producto(sku):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -46,47 +46,63 @@ def buscar_producto(sku):
     base_url = "https://depofit.com"
     
     # PASO 1: BUSCAR EL PRODUCTO
-    # Construimos la URL de búsqueda con el código que ingresaste
     url_busqueda = f"https://depofit.com/search?q={sku}"
     
     try:
-        # Descargamos la página de búsqueda
         response_busqueda = requests.get(url_busqueda, headers=headers)
         tree_busqueda = html.fromstring(response_busqueda.content)
         
-        # Buscamos enlaces que contengan "/products/"
-        # Explicación: Buscamos dentro de 'main' o 'div' para evitar enlaces del menú superior
-        # Tomamos el primer enlace que parezca un producto real
+        # Buscamos el primer enlace de producto real
         enlaces_productos = tree_busqueda.xpath('//a[contains(@href, "/products/")]/@href')
         
         url_producto = None
-        
-        # Filtramos enlaces duplicados o irrelevantes (limpieza básica)
         for link in enlaces_productos:
-            # Ignoramos enlaces que sean solo texto o vacíos
             if len(link) > 5:
-                # Si el link es relativo (ej: /products/zapato), lo convertimos a absoluto
                 url_producto = urljoin(base_url, link)
-                break # Nos quedamos con el primero que encontramos
+                break 
         
         if not url_producto:
-            # Si no encontramos ningún enlace de producto en la búsqueda
             return {"modo": "busqueda_externa", "url": url_busqueda}
 
-        # PASO 2: EXTRAER DATOS DEL PRODUCTO ENCONTRADO
+        # PASO 2: EXTRAER DATOS (Lógica de Precios Mejorada)
         page = requests.get(url_producto, headers=headers)
         tree = html.fromstring(page.content)
-        
         datos = {"modo": "encontrado"}
         
         # Título
         titulo = tree.xpath('//h1/text()')
         datos['titulo'] = titulo[0].strip() if titulo else "Título no detectado"
         
-        # Precio (Buscamos símbolos de dinero o clases de precio)
-        precios = tree.xpath('//span[contains(@class, "price")]/text() | //*[contains(text(), "$")]/text()')
-        precios_limpios = [p.strip() for p in precios if "$" in p and len(p) < 20]
-        datos['precio'] = precios_limpios[0] if precios_limpios else "Consultar Web"
+        # --- NUEVA LÓGICA DE PRECIOS ---
+        precio_encontrado = None
+        moneda = "$" # Asumimos dólar por defecto
+
+        # ESTRATEGIA A: Metadatos (Lo más confiable)
+        # Shopify suele poner el precio en <meta property="og:price:amount">
+        meta_precio = tree.xpath('//meta[@property="og:price:amount"]/@content | //meta[@property="product:price:amount"]/@content')
+        meta_moneda = tree.xpath('//meta[@property="og:price:currency"]/@content')
+        
+        if meta_precio:
+            precio_valor = meta_precio[0]
+            # Si encontramos la moneda en los metadatos, la usamos (ej. USD)
+            simbolo = meta_moneda[0] if meta_moneda else "$"
+            precio_encontrado = f"{simbolo} {precio_valor}"
+        
+        # ESTRATEGIA B: Clases específicas de Oferta (Sale Price)
+        # Si A falla, buscamos específicamente el precio de oferta
+        if not precio_encontrado:
+            precios_oferta = tree.xpath('//span[contains(@class, "price-item--sale")]/text() | //span[contains(@class, "special-price")]/text()')
+            precios_oferta_limpios = [p.strip() for p in precios_oferta if "$" in p]
+            if precios_oferta_limpios:
+                precio_encontrado = precios_oferta_limpios[0]
+
+        # ESTRATEGIA C: Fallback antiguo (Cualquier precio)
+        if not precio_encontrado:
+             precios = tree.xpath('//span[contains(@class, "price")]/text() | //*[contains(text(), "$")]/text()')
+             precios_limpios = [p.strip() for p in precios if "$" in p and len(p) < 20]
+             precio_encontrado = precios_limpios[0] if precios_limpios else "Consultar Web"
+
+        datos['precio'] = precio_encontrado
         
         # Imagen
         imagen = tree.xpath('//meta[@property="og:image"]/@content')
@@ -117,22 +133,23 @@ if st.button("BUSCAR PRODUCTO"):
     if not codigo_input:
         st.warning("⚠️ Por favor ingresa un código.")
     else:
-        # Mostramos un spinner mientras Python hace el trabajo sucio
-        with st.spinner(f'Buscando "{codigo_input}" en catálogo...'):
+        with st.spinner(f'Buscando "{codigo_input}"...'):
             resultado = buscar_producto(codigo_input)
         
         if resultado["modo"] == "error":
             st.error(resultado["mensaje"])
             
         elif resultado["modo"] == "busqueda_externa":
-            st.warning(f"No encontré un producto automático para '{codigo_input}'.")
-            st.link_button("🔎 Ver resultados manuales en Depofit", resultado["url"])
+            st.warning(f"No encontré coincidencia exacta para '{codigo_input}'.")
+            st.link_button("🔎 Buscar manualmente", resultado["url"])
             
         elif resultado["modo"] == "encontrado":
             if resultado['imagen']:
                 st.image(resultado['imagen'], use_column_width=True)
             
             st.markdown(f"### {resultado['titulo']}")
+            
+            # Mostramos el precio con un estilo destacado
             st.markdown(f"<div class='price-tag'>{resultado['precio']}</div>", unsafe_allow_html=True)
             
             st.markdown(f"""
@@ -145,4 +162,4 @@ if st.button("BUSCAR PRODUCTO"):
             st.link_button("🔗 Ir al Producto", resultado['url'])
 
 st.markdown("---")
-st.caption("v2.0 • Auto-Discovery Mode")
+st.caption("v3.0 • Precio Inteligente (Meta Data)")
