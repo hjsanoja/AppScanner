@@ -3,6 +3,9 @@ import requests
 from lxml import html
 from urllib.parse import urljoin
 import re
+from PIL import Image
+from pyzbar.pyzbar import decode
+import io
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
@@ -14,24 +17,18 @@ st.set_page_config(
 # --- DISEÑO MATERIAL 3 EXPRESSIVE (CSS) ---
 st.markdown("""
     <style>
-    /* Importamos Roboto (Fuente estándar de Android) */
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
 
-    /* Reset básico */
     html, body, [class*="css"] {
         font-family: 'Roboto', sans-serif;
         color: #1F1F1F;
     }
-
-    /* Fondo de la App */
     .stApp {
         background-color: #FFFFFF;
     }
-
-    /* INPUT DE TEXTO (Estilo M3 Filled) */
     div[data-baseweb="input"] {
-        background-color: #F3F6FC; /* Surface Container Low */
-        border-radius: 28px; /* Extra redondeado */
+        background-color: #F3F6FC;
+        border-radius: 28px;
         border: none;
         padding: 4px 8px;
     }
@@ -39,14 +36,12 @@ st.markdown("""
         background-color: #EDF2FA;
         box-shadow: inset 0 0 0 2px #000000;
     }
-
-    /* BOTÓN (Estilo M3 Filled Button) */
     .stButton > button {
         width: 100%;
-        background-color: #000000; /* Primary */
-        color: #FFFFFF; /* On Primary */
-        border-radius: 100px; /* Full Pill Shape */
-        height: 56px; /* Altura estándar M3 */
+        background-color: #000000;
+        color: #FFFFFF;
+        border-radius: 100px;
+        height: 56px;
         font-weight: 500;
         font-size: 16px;
         letter-spacing: 0.5px;
@@ -58,20 +53,12 @@ st.markdown("""
         box-shadow: 0px 4px 8px rgba(0,0,0,0.2);
         transform: translateY(-1px);
     }
-    .stButton > button:active {
-        transform: scale(0.98);
-    }
-
-    /* TARJETAS (Cards M3) */
     .m3-card {
-        background-color: #F3F6FC; /* Surface Container */
+        background-color: #F3F6FC;
         border-radius: 24px;
         padding: 24px;
         margin-bottom: 16px;
-        transition: background-color 0.3s;
     }
-    
-    /* TIPOGRAFÍA */
     .display-large {
         font-size: 57px;
         line-height: 64px;
@@ -80,26 +67,22 @@ st.markdown("""
         letter-spacing: -0.25px;
         margin: 10px 0 20px 0;
     }
-    
     .headline-small {
         font-size: 24px;
         line-height: 32px;
         font-weight: 500;
         color: #1F1F1F;
     }
-
     .body-medium {
         font-size: 14px;
         line-height: 20px;
-        color: #444746; /* On Surface Variant */
+        color: #444746;
     }
-
-    /* CHIPS (Etiquetas) */
     .m3-chip {
         display: inline-flex;
         align-items: center;
-        background-color: #C4EED0; /* Success Container */
-        color: #072711; /* On Success Container */
+        background-color: #C4EED0;
+        color: #072711;
         padding: 6px 16px;
         border-radius: 8px;
         font-size: 14px;
@@ -107,12 +90,6 @@ st.markdown("""
         margin-bottom: 16px;
         gap: 8px;
     }
-    
-    .m3-chip-icon {
-        font-size: 16px;
-    }
-
-    /* Warning Card */
     .warning-card {
         background-color: #FFEBEE;
         color: #B71C1C;
@@ -120,8 +97,6 @@ st.markdown("""
         border-radius: 16px;
         font-weight: 500;
     }
-
-    /* Ocultar elementos nativos de Streamlit que ensucian */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
@@ -133,7 +108,22 @@ def normalizar_texto(texto):
     if not texto: return ""
     return str(texto).lower().strip()
 
-# --- LÓGICA DE SCRAPING (Sin Cambios - Funciona Perfecto) ---
+# --- HELPER: Decodificar Imagen ---
+def leer_codigo_de_imagen(image_file):
+    try:
+        # Abrir imagen con Pillow
+        image = Image.open(image_file)
+        # Decodificar códigos (QR o Barras)
+        codigos = decode(image)
+        if codigos:
+            # Retornamos el primer código encontrado
+            # .data viene en bytes, lo decodificamos a string
+            return codigos[0].data.decode("utf-8")
+    except Exception as e:
+        st.error(f"Error leyendo imagen: {e}")
+    return None
+
+# --- LÓGICA DE SCRAPING ---
 def buscar_producto(sku):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -161,7 +151,6 @@ def buscar_producto(sku):
         if not urls_unicas:
             return {"modo": "busqueda_externa", "url": url_busqueda}
 
-        # Verificación
         for i, url_producto in enumerate(urls_unicas[:3]):
             page = requests.get(url_producto, headers=headers)
             tree = html.fromstring(page.content)
@@ -214,33 +203,57 @@ def extraer_precio_e_imagen(tree, url, titulo, modelo, sku_original):
 
 # --- INTERFAZ DE USUARIO (UI) ---
 
-# Título minimalista
 st.markdown("<h2 style='text-align: center; font-weight: 700; margin-bottom: 20px;'>DepoScanner</h2>", unsafe_allow_html=True)
 
-# Input
-codigo_input = st.text_input("", placeholder="Escribe el código SKU aquí...", label_visibility="collapsed")
+# --- SECCIÓN DE CÁMARA ---
+# Usamos un expander para que la cámara no estorbe si no se usa
+with st.expander("📸 Abrir Escáner de Cámara"):
+    imagen_camara = st.camera_input("Toma una foto clara del código")
 
-# Espaciador visual
+codigo_detectado = None
+
+# Si hay foto, intentamos leerla
+if imagen_camara:
+    with st.spinner("Analizando código..."):
+        codigo_leido = leer_codigo_de_imagen(imagen_camara)
+        if codigo_leido:
+            st.success(f"¡Código detectado! {codigo_leido}")
+            codigo_detectado = codigo_leido
+        else:
+            st.warning("No se detectó ningún código legible en la imagen.")
+
+# --- SECCIÓN DE BÚSQUEDA ---
+# Si la cámara detectó algo, lo usamos por defecto. Si no, campo vacío.
+valor_inicial = codigo_detectado if codigo_detectado else ""
+
+# Input manual (se llena solo si la cámara detecta algo)
+# key="sku_input" es importante para manejar el estado
+codigo_input = st.text_input("", value=valor_inicial, placeholder="Escribe el SKU o escanea...", label_visibility="collapsed")
+
 st.write("") 
 
-# Botón
-if st.button("Buscar Producto"):
+# Botón de búsqueda (automático si viene de cámara)
+boton_presionado = st.button("Buscar Producto")
+
+# Lógica de disparo: Si apretó botón O si la cámara acaba de detectar algo
+debe_buscar = boton_presionado or (codigo_detectado is not None)
+
+if debe_buscar:
     if not codigo_input:
-        st.markdown("<div class='warning-card'>⚠️ Escribe un código primero</div>", unsafe_allow_html=True)
+        st.markdown("<div class='warning-card'>⚠️ Escribe o escanea un código</div>", unsafe_allow_html=True)
     else:
-        with st.spinner(''):
+        with st.spinner('Buscando información...'):
             resultado = buscar_producto(codigo_input)
         
-        st.write("") # Margen
+        st.write("") 
         
         if resultado["modo"] == "error":
             st.error(resultado["mensaje"])
             
         elif resultado["modo"] == "busqueda_externa" or resultado["modo"] == "no_encontrado_exacto":
-            # Eliminamos sangría para evitar bloque de código
             st.markdown(f"""<div class='m3-card'>
 <div class='headline-small'>No hubo match exacto</div>
-<div class='body-medium' style='margin-top: 8px;'>El código <b>{codigo_input}</b> no aparece directamente, pero puede estar en recomendados.</div>
+<div class='body-medium' style='margin-top: 8px;'>El código <b>{codigo_input}</b> no aparece directamente.</div>
 <br>
 <a href='{resultado["url"]}' target='_blank' style='text-decoration: none; color: #000000; font-weight: 500;'>
 🔎 Ver resultados en Depofit &rarr;
@@ -248,8 +261,6 @@ if st.button("Buscar Producto"):
 </div>""", unsafe_allow_html=True)
             
         elif resultado["modo"] == "encontrado":
-            # --- TARJETA DE RESULTADO PRINCIPAL ---
-            # IMPORTANTE: HTML alineado a la izquierda sin sangría
             st.markdown(f"""<div class='m3-card'>
 <div class='m3-chip'>
 <span class='m3-chip-icon'>✓</span> Verificado
@@ -262,11 +273,9 @@ if st.button("Buscar Producto"):
 </div>
 </div>""", unsafe_allow_html=True)
             
-            # Imagen fuera de la tarjeta de texto, para que luzca grande (estilo Instagram/M3)
             if resultado['imagen']:
                 st.image(resultado['imagen'], use_column_width=True)
             
-            # Botón flotante simulado (Link final)
             st.markdown(f"""<div style='text-align: center; margin-top: 20px;'>
 <a href='{resultado["url"]}' target='_blank' 
 style='background-color: #E8DEF8; color: #1D192B; padding: 12px 24px; border-radius: 100px; text-decoration: none; font-weight: 500; font-size: 14px;'>
@@ -276,4 +285,4 @@ Abrir en Web Oficial ↗
 
 st.write("")
 st.write("")
-st.markdown("<div style='text-align: center; color: #CCC; font-size: 12px;'>M3 Expressive UI • v5.0</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: #CCC; font-size: 12px;'>M3 Expressive UI • v6.0 Camera Enabled</div>", unsafe_allow_html=True)
