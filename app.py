@@ -179,6 +179,8 @@ def buscar_depofit(sku, headers, base_url="https://depofit.com"):
             tree = html.fromstring(page.content)
             
             titulo_texto = tree.xpath('//h1/text()')[0].strip() if tree.xpath('//h1/text()') else ""
+            
+            # USANDO LÓGICA ROBUSTA (en lugar del XPath dinámico del usuario)
             modelo_nodo = tree.xpath('//li[contains(., "Modelo")]//text()')
             modelo_texto = "".join(modelo_nodo).replace("Modelo:", "").replace("Modelo", "").strip() if modelo_nodo else ""
             
@@ -221,7 +223,6 @@ def buscar_planetasports(sku, headers):
         tree = html.fromstring(response.content)
 
         # AJUSTE CLAVE: Buscamos cualquier enlace de producto en el área de contenido principal.
-        # Esto es más general que las clases específicas que podrían cambiar.
         producto_encontrado = tree.xpath('//div[@id="content"]//a[contains(@href, "productid=")]/@href')
         
         if not producto_encontrado:
@@ -240,21 +241,26 @@ def buscar_planetasports(sku, headers):
         # 2. Extracción de Título
         titulo_nodo = tree_producto.xpath('//h1/text()')
         
-        # 3. Extracción de Modelo/SKU (Referencia)
-        detalles_nodo = tree_producto.xpath('//div[contains(@class, "product-info")]//div[contains(text(), "estilo")]/text() | //div[contains(@class, "product-info")]//div[contains(text(), "Referencia")]/text()')
+        # 3. Extracción de Modelo/SKU (Usando el XPath del usuario: //*[@id="description"]/text()[1])
+        # Buscamos en la descripción completa, ya que el código de estilo puede estar ahí.
+        description_text_nodes = tree_producto.xpath('//*[@id="description"]//text()')
+        description_text = " ".join([t.strip() for t in description_text_nodes if t.strip()])
         
+        # Intentar extraer el campo 'estilo' para el modelo
+        estilo_nodo = tree_producto.xpath('//div[contains(@class, "product-info")]//div[contains(text(), "estilo")]/text()')
+        model_value_full = next((d.strip() for d in estilo_nodo), description_text) # Usa descripción si no encuentra 'estilo'
+
         price_value = precio_nodo[0].strip() if precio_nodo else "---"
         title_value = titulo_nodo[0].strip() if titulo_nodo else "Título no detectado"
         
-        model_value_full = next((d.strip() for d in detalles_nodo), 'No especificado')
-        
-        # Verificación: Búsqueda flexible de SKU en el campo de estilo
+        # Verificación: Búsqueda flexible de SKU en el campo de estilo/descripción
         match_estilo = re.search(re.escape(sku_buscado), normalizar_texto(model_value_full))
 
         if match_estilo:
             resultado['status'] = "Encontrado"
             resultado['price'] = price_value
             resultado['url'] = url_producto
+            # Limpiamos el texto de 'estilo:' si lo encontramos
             resultado['model'] = model_value_full.replace("estilo:", "").strip()
             resultado['title'] = title_value
         
@@ -264,17 +270,15 @@ def buscar_planetasports(sku, headers):
         resultado['status'] = f"Error: {e.__class__.__name__}"
         return resultado
 
-# --- FUNCIÓN PRINCIPAL DE BÚSQUEDA Y COMPARACIÓN ---
+# --- FUNCIÓN PRINCIPAL DE BÚSQUEDA Y COMPARACIÓN (RESTO DEL CÓDIGO SIN CAMBIOS) ---
 def buscar_y_comparar(sku):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     
-    # Ejecutamos búsquedas en paralelo
     depofit_data = buscar_depofit(sku, headers)
     planeta_data = buscar_planetasports(sku, headers)
     
-    # Consolidamos los resultados
     resultados = {
         "sku": sku,
         "depofit": depofit_data,
@@ -311,14 +315,13 @@ st.write("")
 
 boton_presionado = st.button("Buscar y Comparar Precios")
 
-# Usamos st.session_state para manejar el estado del código detectado y evitar doble disparo
 if 'last_searched_code' not in st.session_state:
     st.session_state['last_searched_code'] = None
 
 debe_buscar = boton_presionado or (codigo_detectado is not None and codigo_detectado != st.session_state.get('last_searched_code'))
 
 if debe_buscar and codigo_input:
-    st.session_state['last_searched_code'] = codigo_input # Guarda el código buscado
+    st.session_state['last_searched_code'] = codigo_input 
     
     with st.spinner('Buscando información en ambas tiendas...'):
         resultados_comp = buscar_y_comparar(codigo_input)
@@ -330,7 +333,6 @@ if debe_buscar and codigo_input:
     depofit_data = resultados_comp['depofit']
     planeta_data = resultados_comp['planeta']
     
-    # Determinamos la fuente principal para imagen/título
     fuente_principal = None
     if depofit_data['status'] == 'Encontrado':
         fuente_principal = depofit_data
@@ -392,7 +394,7 @@ if debe_buscar and codigo_input:
 
 
     st.markdown("---")
-    st.caption("v9.0 • XPATHs y Verificación Mejorados")
+    st.caption("v10.0 • Verificación Final de SKU")
 
 else:
     st.session_state['last_searched_code'] = None
