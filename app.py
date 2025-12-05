@@ -237,53 +237,42 @@ if st.button("Buscar Producto"):
             st.error(resultado["mensaje"])
             
         elif resultado["modo"] == "busqueda_externa" or resultado["modo"] == "no_encontrado_exacto":
-            st.markdown(f"""
-            <div class='m3-card'>
-                <div class='headline-small'>No hubo match exacto</div>
-                <div class='body-medium' style='margin-top: 8px;'>El código <b>{codigo_input}</b> no aparece directamente, pero puede estar en recomendados.</div>
-                <br>
-                <a href='{resultado["url"]}' target='_blank' style='text-decoration: none; color: #000000; font-weight: 500;'>
-                    🔎 Ver resultados en Depofit &rarr;
-                </a>
-            </div>
-            """, unsafe_allow_html=True)
+            # Eliminamos sangría para evitar bloque de código
+            st.markdown(f"""<div class='m3-card'>
+<div class='headline-small'>No hubo match exacto</div>
+<div class='body-medium' style='margin-top: 8px;'>El código <b>{codigo_input}</b> no aparece directamente, pero puede estar en recomendados.</div>
+<br>
+<a href='{resultado["url"]}' target='_blank' style='text-decoration: none; color: #000000; font-weight: 500;'>
+🔎 Ver resultados en Depofit &rarr;
+</a>
+</div>""", unsafe_allow_html=True)
             
         elif resultado["modo"] == "encontrado":
             # --- TARJETA DE RESULTADO PRINCIPAL ---
-            st.markdown(f"""
-            <div class='m3-card'>
-                <!-- Chip de Estado -->
-                <div class='m3-chip'>
-                    <span class='m3-chip-icon'>✓</span> Verificado
-                </div>
-                
-                <!-- Título -->
-                <div class='headline-small'>{resultado['titulo']}</div>
-                
-                <!-- Precio Display -->
-                <div class='display-large'>{resultado['precio']}</div>
-                
-                <!-- Detalles en superficie más oscura/variante -->
-                <div style='background-color: #FFFFFF; padding: 16px; border-radius: 12px; margin-top: 16px;'>
-                    <div class='body-medium'><b>Modelo:</b> {resultado['modelo']}</div>
-                    <div class='body-medium' style='color: #999;'>SKU: {codigo_input}</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            # IMPORTANTE: HTML alineado a la izquierda sin sangría
+            st.markdown(f"""<div class='m3-card'>
+<div class='m3-chip'>
+<span class='m3-chip-icon'>✓</span> Verificado
+</div>
+<div class='headline-small'>{resultado['titulo']}</div>
+<div class='display-large'>{resultado['precio']}</div>
+<div style='background-color: #FFFFFF; padding: 16px; border-radius: 12px; margin-top: 16px;'>
+<div class='body-medium'><b>Modelo:</b> {resultado['modelo']}</div>
+<div class='body-medium' style='color: #999;'>SKU: {codigo_input}</div>
+</div>
+</div>""", unsafe_allow_html=True)
             
             # Imagen fuera de la tarjeta de texto, para que luzca grande (estilo Instagram/M3)
             if resultado['imagen']:
                 st.image(resultado['imagen'], use_column_width=True)
             
             # Botón flotante simulado (Link final)
-            st.markdown(f"""
-            <div style='text-align: center; margin-top: 20px;'>
-                <a href='{resultado["url"]}' target='_blank' 
-                   style='background-color: #E8DEF8; color: #1D192B; padding: 12px 24px; border-radius: 100px; text-decoration: none; font-weight: 500; font-size: 14px;'>
-                   Abrir en Web Oficial ↗
-                </a>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""<div style='text-align: center; margin-top: 20px;'>
+<a href='{resultado["url"]}' target='_blank' 
+style='background-color: #E8DEF8; color: #1D192B; padding: 12px 24px; border-radius: 100px; text-decoration: none; font-weight: 500; font-size: 14px;'>
+Abrir en Web Oficial ↗
+</a>
+</div>""", unsafe_allow_html=True)
 
 st.write("")
 st.write("")
