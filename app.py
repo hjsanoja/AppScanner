@@ -4,6 +4,7 @@ from lxml import html
 from urllib.parse import urljoin
 import re
 from PIL import Image
+# Librerías para leer códigos de barras/QR (requiere libzbar0 en packages.txt)
 from pyzbar.pyzbar import decode
 import io
 
@@ -105,19 +106,18 @@ st.markdown("""
 
 # --- HELPER: Limpieza de Texto ---
 def normalizar_texto(texto):
+    """Convierte texto a minúsculas y elimina espacios para comparación."""
     if not texto: return ""
     return str(texto).lower().strip()
 
 # --- HELPER: Decodificar Imagen ---
 def leer_codigo_de_imagen(image_file):
+    """Intenta leer un código de barras o QR de un archivo de imagen."""
     try:
-        # Abrir imagen con Pillow
         image = Image.open(image_file)
-        # Decodificar códigos (QR o Barras)
         codigos = decode(image)
         if codigos:
-            # Retornamos el primer código encontrado
-            # .data viene en bytes, lo decodificamos a string
+            # Devuelve el primer código como cadena de texto
             return codigos[0].data.decode("utf-8")
     except Exception as e:
         st.error(f"Error leyendo imagen: {e}")
@@ -125,6 +125,7 @@ def leer_codigo_de_imagen(image_file):
 
 # --- LÓGICA DE SCRAPING ---
 def buscar_producto(sku):
+    """Realiza la búsqueda en Depofit, verifica y extrae los datos."""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
@@ -133,9 +134,11 @@ def buscar_producto(sku):
     url_busqueda = f"https://depofit.com/search?q={sku}"
     
     try:
+        # Paso 1: Buscar en la página de resultados
         response_busqueda = requests.get(url_busqueda, headers=headers)
         tree_busqueda = html.fromstring(response_busqueda.content)
         
+        # Encuentra posibles enlaces de productos (excluyendo menú)
         candidatos = tree_busqueda.xpath('//main//a[contains(@href, "/products/")]/@href')
         if not candidatos:
             candidatos = tree_busqueda.xpath('//body//a[contains(@href, "/products/")]/@href')
@@ -151,7 +154,8 @@ def buscar_producto(sku):
         if not urls_unicas:
             return {"modo": "busqueda_externa", "url": url_busqueda}
 
-        for i, url_producto in enumerate(urls_unicas[:3]):
+        # Paso 2: Verificar cada producto candidato
+        for i, url_producto in enumerate(urls_unicas[:3]): # Solo revisamos los 3 primeros
             page = requests.get(url_producto, headers=headers)
             tree = html.fromstring(page.content)
             
@@ -163,23 +167,28 @@ def buscar_producto(sku):
             texto_pagina = page.text.lower()
             
             es_match = False
+            # Criterios de coincidencia (más estricto)
             if sku_buscado in normalizar_texto(modelo_texto): es_match = True
             elif sku_buscado in normalizar_texto(titulo_texto): es_match = True
             elif sku_buscado in normalizar_texto(url_producto): es_match = True
             elif texto_pagina.count(sku_buscado) > 0: es_match = True
             
             if es_match:
+                # Si hay coincidencia, extraemos y retornamos
                 return extraer_precio_e_imagen(tree, url_producto, titulo_texto, modelo_texto, sku)
         
+        # Si ningún producto de los primeros 3 coincidió
         return {"modo": "no_encontrado_exacto", "url": url_busqueda}
 
     except Exception as e:
         return {"modo": "error", "mensaje": f"Error técnico: {str(e)}"}
 
 def extraer_precio_e_imagen(tree, url, titulo, modelo, sku_original):
+    """Extrae precio, imagen y modelo de la página de un producto."""
     datos = {"modo": "encontrado", "url": url, "titulo": titulo, "modelo": modelo}
     
     precio_encontrado = None
+    # 1. Metadatos (Estrategia más fiable para el precio)
     meta_precio = tree.xpath('//meta[@property="og:price:amount"]/@content | //meta[@property="product:price:amount"]/@content')
     meta_moneda = tree.xpath('//meta[@property="og:price:currency"]/@content')
     
@@ -187,6 +196,7 @@ def extraer_precio_e_imagen(tree, url, titulo, modelo, sku_original):
         simbolo = meta_moneda[0] if meta_moneda else "$"
         precio_encontrado = f"{simbolo} {meta_precio[0]}"
     
+    # 2. Fallback visual para el precio
     if not precio_encontrado:
         precios_oferta = tree.xpath('//span[contains(@class, "price-item--sale")]/text()')
         if precios_oferta: precio_encontrado = precios_oferta[0].strip()
@@ -197,8 +207,11 @@ def extraer_precio_e_imagen(tree, url, titulo, modelo, sku_original):
         precio_encontrado = precios_limpios[0] if precios_limpios else "---"
 
     datos['precio'] = precio_encontrado
+    
+    # Imagen (Metadatos)
     imagen = tree.xpath('//meta[@property="og:image"]/@content')
     datos['imagen'] = imagen[0] if imagen else None
+    
     return datos
 
 # --- INTERFAZ DE USUARIO (UI) ---
@@ -206,13 +219,11 @@ def extraer_precio_e_imagen(tree, url, titulo, modelo, sku_original):
 st.markdown("<h2 style='text-align: center; font-weight: 700; margin-bottom: 20px;'>DepoScanner</h2>", unsafe_allow_html=True)
 
 # --- SECCIÓN DE CÁMARA ---
-# Usamos un expander para que la cámara no estorbe si no se usa
 with st.expander("📸 Abrir Escáner de Cámara"):
     imagen_camara = st.camera_input("Toma una foto clara del código")
 
 codigo_detectado = None
 
-# Si hay foto, intentamos leerla
 if imagen_camara:
     with st.spinner("Analizando código..."):
         codigo_leido = leer_codigo_de_imagen(imagen_camara)
@@ -223,19 +234,14 @@ if imagen_camara:
             st.warning("No se detectó ningún código legible en la imagen.")
 
 # --- SECCIÓN DE BÚSQUEDA ---
-# Si la cámara detectó algo, lo usamos por defecto. Si no, campo vacío.
 valor_inicial = codigo_detectado if codigo_detectado else ""
 
-# Input manual (se llena solo si la cámara detecta algo)
-# key="sku_input" es importante para manejar el estado
 codigo_input = st.text_input("", value=valor_inicial, placeholder="Escribe el SKU o escanea...", label_visibility="collapsed")
 
 st.write("") 
 
-# Botón de búsqueda (automático si viene de cámara)
 boton_presionado = st.button("Buscar Producto")
 
-# Lógica de disparo: Si apretó botón O si la cámara acaba de detectar algo
 debe_buscar = boton_presionado or (codigo_detectado is not None)
 
 if debe_buscar:
@@ -261,6 +267,7 @@ if debe_buscar:
 </div>""", unsafe_allow_html=True)
             
         elif resultado["modo"] == "encontrado":
+            # --- TARJETA DE RESULTADO PRINCIPAL ---
             st.markdown(f"""<div class='m3-card'>
 <div class='m3-chip'>
 <span class='m3-chip-icon'>✓</span> Verificado
@@ -276,6 +283,7 @@ if debe_buscar:
             if resultado['imagen']:
                 st.image(resultado['imagen'], use_column_width=True)
             
+            # Botón flotante simulado (Link final)
             st.markdown(f"""<div style='text-align: center; margin-top: 20px;'>
 <a href='{resultado["url"]}' target='_blank' 
 style='background-color: #E8DEF8; color: #1D192B; padding: 12px 24px; border-radius: 100px; text-decoration: none; font-weight: 500; font-size: 14px;'>
