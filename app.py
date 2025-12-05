@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from lxml import html
+from urllib.parse import urljoin
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
@@ -9,12 +10,10 @@ st.set_page_config(
     layout="centered"
 )
 
-# Estilos CSS personalizados para que se vea bien en móviles
+# Estilos CSS
 st.markdown("""
     <style>
-    .main {
-        background-color: #f8f9fa;
-    }
+    .main { background-color: #f8f9fa; }
     .stButton>button {
         width: 100%;
         background-color: #000000;
@@ -39,107 +38,111 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- LÓGICA DE SCRAPING (El Cerebro) ---
+# --- LÓGICA DE SCRAPING (El Cerebro Mejorado) ---
 def buscar_producto(sku):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
+    base_url = "https://depofit.com"
     
-    # 1. Búsqueda: Intenta encontrar el producto
-    # Nota: Si Depofit tiene una URL predecible para búsqueda, la usamos.
-    # Como el ejemplo directo es difícil de adivinar sin buscar primero,
-    # aquí simulamos que si es el código de ejemplo, vamos directo a la URL conocida.
-    # Para otros, enviamos a la página de búsqueda general.
+    # PASO 1: BUSCAR EL PRODUCTO
+    # Construimos la URL de búsqueda con el código que ingresaste
+    url_busqueda = f"https://depofit.com/search?q={sku}"
     
-    if sku.strip() == "48.98721":
-        url = "https://depofit.com/products/zapatos-de-tenis-para-caballero-the-roger-pro"
-    else:
-        # Aquí intentamos construir una URL de búsqueda genérica
-        # Si Depofit no permite scraping directo de la búsqueda, esto mostrará el enlace para que el usuario haga clic.
-        url_busqueda = f"https://depofit.com/search?q={sku}"
-        return {"modo": "busqueda_externa", "url": url_busqueda}
-
     try:
-        page = requests.get(url, headers=headers)
+        # Descargamos la página de búsqueda
+        response_busqueda = requests.get(url_busqueda, headers=headers)
+        tree_busqueda = html.fromstring(response_busqueda.content)
+        
+        # Buscamos enlaces que contengan "/products/"
+        # Explicación: Buscamos dentro de 'main' o 'div' para evitar enlaces del menú superior
+        # Tomamos el primer enlace que parezca un producto real
+        enlaces_productos = tree_busqueda.xpath('//a[contains(@href, "/products/")]/@href')
+        
+        url_producto = None
+        
+        # Filtramos enlaces duplicados o irrelevantes (limpieza básica)
+        for link in enlaces_productos:
+            # Ignoramos enlaces que sean solo texto o vacíos
+            if len(link) > 5:
+                # Si el link es relativo (ej: /products/zapato), lo convertimos a absoluto
+                url_producto = urljoin(base_url, link)
+                break # Nos quedamos con el primero que encontramos
+        
+        if not url_producto:
+            # Si no encontramos ningún enlace de producto en la búsqueda
+            return {"modo": "busqueda_externa", "url": url_busqueda}
+
+        # PASO 2: EXTRAER DATOS DEL PRODUCTO ENCONTRADO
+        page = requests.get(url_producto, headers=headers)
         tree = html.fromstring(page.content)
         
-        # 2. Extracción de datos (Usando XPaths Robustos)
         datos = {"modo": "encontrado"}
         
         # Título
         titulo = tree.xpath('//h1/text()')
         datos['titulo'] = titulo[0].strip() if titulo else "Título no detectado"
         
-        # Precio (Busca clases comunes de precio o símbolo $)
+        # Precio (Buscamos símbolos de dinero o clases de precio)
         precios = tree.xpath('//span[contains(@class, "price")]/text() | //*[contains(text(), "$")]/text()')
-        # Filtramos textos que tengan '$' y sean cortos (para evitar oraciones largas)
         precios_limpios = [p.strip() for p in precios if "$" in p and len(p) < 20]
-        datos['precio'] = precios_limpios[0] if precios_limpios else "No disponible"
+        datos['precio'] = precios_limpios[0] if precios_limpios else "Consultar Web"
         
-        # Imagen (Busca la metaetiqueta social, suele ser la mejor calidad)
+        # Imagen
         imagen = tree.xpath('//meta[@property="og:image"]/@content')
         datos['imagen'] = imagen[0] if imagen else None
         
-        # Modelo (Específico para tu necesidad)
-        # Busca cualquier elemento de lista que diga "Modelo"
+        # Modelo
         modelo_nodo = tree.xpath('//li[contains(., "Modelo")]//text()')
         if modelo_nodo:
-             # Une el texto y quita la palabra "Modelo:"
             texto_modelo = "".join(modelo_nodo).replace("Modelo:", "").replace("Modelo", "").strip()
             datos['modelo'] = texto_modelo
         else:
             datos['modelo'] = "No especificado"
             
-        datos['url'] = url
+        datos['url'] = url_producto
         return datos
 
     except Exception as e:
-        return {"modo": "error", "mensaje": f"Error conectando: {str(e)}"}
+        return {"modo": "error", "mensaje": f"Error técnico: {str(e)}"}
 
-# --- INTERFAZ DE USUARIO (La Cara) ---
+# --- INTERFAZ DE USUARIO ---
 
 st.title("DepoScanner 👟")
 st.write("Escanear o ingresar código de producto:")
 
-# Input grande
 codigo_input = st.text_input("SKU / Código", placeholder="Ej: 48.98721")
 
 if st.button("BUSCAR PRODUCTO"):
     if not codigo_input:
         st.warning("⚠️ Por favor ingresa un código.")
     else:
-        with st.spinner('Conectando con Depofit...'):
+        # Mostramos un spinner mientras Python hace el trabajo sucio
+        with st.spinner(f'Buscando "{codigo_input}" en catálogo...'):
             resultado = buscar_producto(codigo_input)
         
         if resultado["modo"] == "error":
             st.error(resultado["mensaje"])
             
         elif resultado["modo"] == "busqueda_externa":
-            st.warning(f"El producto '{codigo_input}' no tiene enlace directo configurado en esta demo.")
-            st.markdown("Pero puedes buscarlo directamente aquí:")
-            st.link_button("🔎 Buscar en Depofit.com", resultado["url"])
+            st.warning(f"No encontré un producto automático para '{codigo_input}'.")
+            st.link_button("🔎 Ver resultados manuales en Depofit", resultado["url"])
             
         elif resultado["modo"] == "encontrado":
-            # --- MOSTRAR RESULTADOS ---
-            
-            # Imagen
             if resultado['imagen']:
                 st.image(resultado['imagen'], use_column_width=True)
             
-            # Título y Precio
             st.markdown(f"### {resultado['titulo']}")
             st.markdown(f"<div class='price-tag'>{resultado['precio']}</div>", unsafe_allow_html=True)
             
-            # Caja de detalles (Modelo)
             st.markdown(f"""
             <div class='info-box'>
                 <b>🏷️ Modelo detectado:</b> {resultado['modelo']}
             </div>
             """, unsafe_allow_html=True)
             
-            st.write("") # Espacio
-            st.link_button("🔗 Ver en Web Oficial", resultado['url'])
+            st.write("")
+            st.link_button("🔗 Ir al Producto", resultado['url'])
 
-# Pie de página simple
 st.markdown("---")
-st.caption("v1.0 • Scraper Web Móvil")
+st.caption("v2.0 • Auto-Discovery Mode")
