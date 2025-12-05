@@ -147,10 +147,7 @@ def buscar_depofit(sku, headers, base_url="https://depofit.com"):
     # Limpiamos el SKU de cualquier código de color/talla que pueda tener el usuario
     sku_buscado = normalizar_texto(sku)
     
-    # -------------------------------------------------------------
-    # NUEVA VERIFICACIÓN FLEXIBLE: Busca el SKU en el texto de la página
-    # ignorando caracteres como guiones o puntos que el usuario no ingresó.
-    # -------------------------------------------------------------
+    # Expresión Regular Flexible para buscar el SKU ignorando guiones/espacios
     sku_regex = re.escape(sku_buscado).replace(r'\-', '[\-\s]?').replace(r'\.', '[\.\s]?')
     
     url_busqueda = f"{base_url}/search?q={sku}"
@@ -160,6 +157,7 @@ def buscar_depofit(sku, headers, base_url="https://depofit.com"):
         response_busqueda = requests.get(url_busqueda, headers=headers)
         tree_busqueda = html.fromstring(response_busqueda.content)
         
+        # Buscamos enlaces de productos
         candidatos = tree_busqueda.xpath('//main//a[contains(@href, "/products/")]/@href')
         if not candidatos:
             candidatos = tree_busqueda.xpath('//body//a[contains(@href, "/products/")]/@href')
@@ -175,6 +173,7 @@ def buscar_depofit(sku, headers, base_url="https://depofit.com"):
         if not urls_unicas:
             return resultado
 
+        # Verificamos los 3 primeros candidatos para evitar falsos positivos
         for url_producto in urls_unicas[:3]: 
             page = requests.get(url_producto, headers=headers)
             tree = html.fromstring(page.content)
@@ -185,7 +184,7 @@ def buscar_depofit(sku, headers, base_url="https://depofit.com"):
             
             texto_completo_producto = normalizar_texto(titulo_texto + " " + modelo_texto)
             
-            # NUEVA VERIFICACIÓN: Busca el SKU dentro de cualquier texto del producto
+            # Verificación: ¿El SKU (flexible) se encuentra en la página del producto?
             es_match = bool(re.search(sku_regex, texto_completo_producto))
             
             if es_match:
@@ -221,13 +220,14 @@ def buscar_planetasports(sku, headers):
         response = requests.get(url_busqueda, headers=headers)
         tree = html.fromstring(response.content)
 
-        # Buscamos el primer resultado de producto
-        producto_encontrado = tree.xpath('//div[contains(@class, "box-product")]/div/a/@href')
+        # AJUSTE CLAVE: Buscamos cualquier enlace de producto en el área de contenido principal.
+        # Esto es más general que las clases específicas que podrían cambiar.
+        producto_encontrado = tree.xpath('//div[@id="content"]//a[contains(@href, "productid=")]/@href')
         
         if not producto_encontrado:
              return resultado
         
-        # Obtenemos la URL absoluta del primer producto
+        # Tomamos el primer producto encontrado
         url_producto = urljoin(base_url, producto_encontrado[0])
         
         # Accedemos a la página del producto para extraer los detalles
@@ -241,24 +241,20 @@ def buscar_planetasports(sku, headers):
         titulo_nodo = tree_producto.xpath('//h1/text()')
         
         # 3. Extracción de Modelo/SKU (Referencia)
-        # Buscamos donde diga "estilo" o "referencia"
         detalles_nodo = tree_producto.xpath('//div[contains(@class, "product-info")]//div[contains(text(), "estilo")]/text() | //div[contains(@class, "product-info")]//div[contains(text(), "Referencia")]/text()')
         
         price_value = precio_nodo[0].strip() if precio_nodo else "---"
         title_value = titulo_nodo[0].strip() if titulo_nodo else "Título no detectado"
         
-        # Lógica mejorada para extraer solo la parte del código base
         model_value_full = next((d.strip() for d in detalles_nodo), 'No especificado')
         
-        # Regex: Busca el SKU que ingresaste dentro de la cadena de estilo (ej. "3ME10120664 WHT-BLK")
-        # Esto asegura que si el SKU base existe, lo consideramos un match.
+        # Verificación: Búsqueda flexible de SKU en el campo de estilo
         match_estilo = re.search(re.escape(sku_buscado), normalizar_texto(model_value_full))
 
         if match_estilo:
             resultado['status'] = "Encontrado"
             resultado['price'] = price_value
             resultado['url'] = url_producto
-            # Mostramos el SKU base más los códigos de color si existen
             resultado['model'] = model_value_full.replace("estilo:", "").strip()
             resultado['title'] = title_value
         
@@ -319,7 +315,7 @@ boton_presionado = st.button("Buscar y Comparar Precios")
 if 'last_searched_code' not in st.session_state:
     st.session_state['last_searched_code'] = None
 
-debe_buscar = boton_presionado or (codigo_detectado is not None and codigo_detectado != st.session_state['last_searched_code'])
+debe_buscar = boton_presionado or (codigo_detectado is not None and codigo_detectado != st.session_state.get('last_searched_code'))
 
 if debe_buscar and codigo_input:
     st.session_state['last_searched_code'] = codigo_input # Guarda el código buscado
@@ -396,14 +392,9 @@ if debe_buscar and codigo_input:
 
 
     st.markdown("---")
-    st.caption("v8.0 • Regex Flexible SKU")
+    st.caption("v9.0 • XPATHs y Verificación Mejorados")
 
-# Si el código detectado existe pero el botón no fue presionado (evita que se recargue el resultado)
-elif codigo_detectado is not None and codigo_detectado == st.session_state.get('last_searched_code'):
-    # No hace nada, espera a que el usuario presione buscar o cambie el código
-    pass
 else:
-    # Esto es solo para la carga inicial
     st.session_state['last_searched_code'] = None
 
 st.markdown("<div style='text-align: center; color: #CCC; font-size: 12px;'>M3 Expressive UI</div>", unsafe_allow_html=True)
