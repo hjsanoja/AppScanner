@@ -11,73 +11,145 @@ st.set_page_config(
     layout="centered"
 )
 
-# Estilos CSS
+# --- DISEÑO MATERIAL 3 EXPRESSIVE (CSS) ---
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button {
+    /* Importamos Roboto (Fuente estándar de Android) */
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+
+    /* Reset básico */
+    html, body, [class*="css"] {
+        font-family: 'Roboto', sans-serif;
+        color: #1F1F1F;
+    }
+
+    /* Fondo de la App */
+    .stApp {
+        background-color: #FFFFFF;
+    }
+
+    /* INPUT DE TEXTO (Estilo M3 Filled) */
+    div[data-baseweb="input"] {
+        background-color: #F3F6FC; /* Surface Container Low */
+        border-radius: 28px; /* Extra redondeado */
+        border: none;
+        padding: 4px 8px;
+    }
+    div[data-baseweb="input"]:focus-within {
+        background-color: #EDF2FA;
+        box-shadow: inset 0 0 0 2px #000000;
+    }
+
+    /* BOTÓN (Estilo M3 Filled Button) */
+    .stButton > button {
         width: 100%;
-        background-color: #000000;
-        color: white;
-        height: 3em;
-        border-radius: 10px;
-        font-weight: bold;
+        background-color: #000000; /* Primary */
+        color: #FFFFFF; /* On Primary */
+        border-radius: 100px; /* Full Pill Shape */
+        height: 56px; /* Altura estándar M3 */
+        font-weight: 500;
+        font-size: 16px;
+        letter-spacing: 0.5px;
+        border: none;
+        transition: transform 0.1s, box-shadow 0.2s;
     }
-    .price-tag {
-        font-size: 2.5em;
-        font-weight: bold;
-        color: #2c3e50;
-        margin-top: 10px;
-        margin-bottom: 10px;
+    .stButton > button:hover {
+        background-color: #333333;
+        box-shadow: 0px 4px 8px rgba(0,0,0,0.2);
+        transform: translateY(-1px);
     }
-    .info-box {
-        background-color: #e9ecef;
-        padding: 15px;
-        border-radius: 10px;
-        margin-top: 10px;
+    .stButton > button:active {
+        transform: scale(0.98);
     }
-    .success-badge {
-        background-color: #d4edda;
-        color: #155724;
-        padding: 5px 10px;
-        border-radius: 5px;
-        font-size: 0.8em;
-        margin-bottom: 10px;
-        display: inline-block;
+
+    /* TARJETAS (Cards M3) */
+    .m3-card {
+        background-color: #F3F6FC; /* Surface Container */
+        border-radius: 24px;
+        padding: 24px;
+        margin-bottom: 16px;
+        transition: background-color 0.3s;
     }
+    
+    /* TIPOGRAFÍA */
+    .display-large {
+        font-size: 57px;
+        line-height: 64px;
+        font-weight: 400;
+        color: #1F1F1F;
+        letter-spacing: -0.25px;
+        margin: 10px 0 20px 0;
+    }
+    
+    .headline-small {
+        font-size: 24px;
+        line-height: 32px;
+        font-weight: 500;
+        color: #1F1F1F;
+    }
+
+    .body-medium {
+        font-size: 14px;
+        line-height: 20px;
+        color: #444746; /* On Surface Variant */
+    }
+
+    /* CHIPS (Etiquetas) */
+    .m3-chip {
+        display: inline-flex;
+        align-items: center;
+        background-color: #C4EED0; /* Success Container */
+        color: #072711; /* On Success Container */
+        padding: 6px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        margin-bottom: 16px;
+        gap: 8px;
+    }
+    
+    .m3-chip-icon {
+        font-size: 16px;
+    }
+
+    /* Warning Card */
+    .warning-card {
+        background-color: #FFEBEE;
+        color: #B71C1C;
+        padding: 16px;
+        border-radius: 16px;
+        font-weight: 500;
+    }
+
+    /* Ocultar elementos nativos de Streamlit que ensucian */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
 # --- HELPER: Limpieza de Texto ---
 def normalizar_texto(texto):
-    """Quita espacios y convierte a minúsculas para comparar mejor"""
     if not texto: return ""
     return str(texto).lower().strip()
 
-# --- LÓGICA DE SCRAPING (Cerebro v4.0 - Verificación Anti-Falsos Positivos) ---
+# --- LÓGICA DE SCRAPING (Sin Cambios - Funciona Perfecto) ---
 def buscar_producto(sku):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     base_url = "https://depofit.com"
     sku_buscado = normalizar_texto(sku)
-    
-    # URL de búsqueda
     url_busqueda = f"https://depofit.com/search?q={sku}"
     
     try:
         response_busqueda = requests.get(url_busqueda, headers=headers)
         tree_busqueda = html.fromstring(response_busqueda.content)
         
-        # ESTRATEGIA: Obtener VARIOS candidatos, no solo el primero
-        # Buscamos enlaces dentro de 'main' para evitar menú/footer
         candidatos = tree_busqueda.xpath('//main//a[contains(@href, "/products/")]/@href')
-        
-        # Si no hay 'main', fallback al body
         if not candidatos:
             candidatos = tree_busqueda.xpath('//body//a[contains(@href, "/products/")]/@href')
 
-        # Limpiamos duplicados manteniendo el orden
         urls_unicas = []
         seen = set()
         for link in candidatos:
@@ -89,59 +161,36 @@ def buscar_producto(sku):
         if not urls_unicas:
             return {"modo": "busqueda_externa", "url": url_busqueda}
 
-        # --- BUCLE DE VERIFICACIÓN ---
-        # Revisamos los primeros 3 productos encontrados para ver cuál es el correcto.
-        # Esto evita que tomemos una "Recomendación" por error.
-        
+        # Verificación
         for i, url_producto in enumerate(urls_unicas[:3]):
-            # Descargar página del producto candidato
             page = requests.get(url_producto, headers=headers)
             tree = html.fromstring(page.content)
             
-            # Extraer datos básicos para verificar
             titulo = tree.xpath('//h1/text()')
             titulo_texto = titulo[0].strip() if titulo else ""
             
             modelo_nodo = tree.xpath('//li[contains(., "Modelo")]//text()')
             modelo_texto = "".join(modelo_nodo).replace("Modelo:", "").replace("Modelo", "").strip() if modelo_nodo else ""
+            texto_pagina = page.text.lower()
             
-            texto_pagina = page.text.lower() # Todo el HTML para búsqueda bruta si falla lo demás
-            
-            # --- CRITERIO DE VERDAD: ¿Es este el producto que busca el usuario? ---
             es_match = False
-            
-            # 1. Coincidencia en Modelo (La más fuerte)
-            if sku_buscado in normalizar_texto(modelo_texto):
-                es_match = True
-            # 2. Coincidencia en Título
-            elif sku_buscado in normalizar_texto(titulo_texto):
-                es_match = True
-            # 3. Coincidencia en URL
-            elif sku_buscado in normalizar_texto(url_producto):
-                es_match = True
-            # 4. Fallback: ¿Aparece el código varias veces en el cuerpo de la página?
-            elif texto_pagina.count(sku_buscado) > 0:
-                # Es un match débil, pero válido si no hay nada mejor
-                es_match = True
+            if sku_buscado in normalizar_texto(modelo_texto): es_match = True
+            elif sku_buscado in normalizar_texto(titulo_texto): es_match = True
+            elif sku_buscado in normalizar_texto(url_producto): es_match = True
+            elif texto_pagina.count(sku_buscado) > 0: es_match = True
             
             if es_match:
-                # ¡ENCONTRADO! Extraemos el resto de datos y retornamos
                 return extraer_precio_e_imagen(tree, url_producto, titulo_texto, modelo_texto, sku)
         
-        # Si terminamos el bucle y ninguno coincidió
         return {"modo": "no_encontrado_exacto", "url": url_busqueda}
 
     except Exception as e:
         return {"modo": "error", "mensaje": f"Error técnico: {str(e)}"}
 
 def extraer_precio_e_imagen(tree, url, titulo, modelo, sku_original):
-    """Función auxiliar para limpiar el código principal"""
     datos = {"modo": "encontrado", "url": url, "titulo": titulo, "modelo": modelo}
     
-    # --- PRECIO (Lógica Meta Data) ---
     precio_encontrado = None
-    
-    # 1. Metadatos (Prioridad Alta)
     meta_precio = tree.xpath('//meta[@property="og:price:amount"]/@content | //meta[@property="product:price:amount"]/@content')
     meta_moneda = tree.xpath('//meta[@property="og:price:currency"]/@content')
     
@@ -149,67 +198,93 @@ def extraer_precio_e_imagen(tree, url, titulo, modelo, sku_original):
         simbolo = meta_moneda[0] if meta_moneda else "$"
         precio_encontrado = f"{simbolo} {meta_precio[0]}"
     
-    # 2. Fallback visual
     if not precio_encontrado:
         precios_oferta = tree.xpath('//span[contains(@class, "price-item--sale")]/text()')
-        if precios_oferta:
-            precio_encontrado = precios_oferta[0].strip()
+        if precios_oferta: precio_encontrado = precios_oferta[0].strip()
             
     if not precio_encontrado:
-        # Último recurso: buscar cualquier precio
         precios = tree.xpath('//span[contains(@class, "price")]/text()')
         precios_limpios = [p.strip() for p in precios if "$" in p]
-        precio_encontrado = precios_limpios[0] if precios_limpios else "Consultar Web"
+        precio_encontrado = precios_limpios[0] if precios_limpios else "---"
 
     datos['precio'] = precio_encontrado
-    
-    # --- IMAGEN ---
     imagen = tree.xpath('//meta[@property="og:image"]/@content')
     datos['imagen'] = imagen[0] if imagen else None
-    
     return datos
 
-# --- INTERFAZ DE USUARIO ---
+# --- INTERFAZ DE USUARIO (UI) ---
 
-st.title("DepoScanner 👟")
-st.write("Escanear o ingresar código de producto:")
+# Título minimalista
+st.markdown("<h2 style='text-align: center; font-weight: 700; margin-bottom: 20px;'>DepoScanner</h2>", unsafe_allow_html=True)
 
-codigo_input = st.text_input("SKU / Código", placeholder="Ej: HV6341-702")
+# Input
+codigo_input = st.text_input("", placeholder="Escribe el código SKU aquí...", label_visibility="collapsed")
 
-if st.button("BUSCAR PRODUCTO"):
+# Espaciador visual
+st.write("") 
+
+# Botón
+if st.button("Buscar Producto"):
     if not codigo_input:
-        st.warning("⚠️ Por favor ingresa un código.")
+        st.markdown("<div class='warning-card'>⚠️ Escribe un código primero</div>", unsafe_allow_html=True)
     else:
-        with st.spinner(f'Analizando catálogo para "{codigo_input}"...'):
+        with st.spinner(''):
             resultado = buscar_producto(codigo_input)
+        
+        st.write("") # Margen
         
         if resultado["modo"] == "error":
             st.error(resultado["mensaje"])
             
         elif resultado["modo"] == "busqueda_externa" or resultado["modo"] == "no_encontrado_exacto":
-            st.warning(f"No encontré una coincidencia EXACTA para '{codigo_input}'.")
-            st.info("Es posible que la web muestre productos recomendados en lugar del resultado.")
-            st.link_button("🔎 Ver resultados en Depofit.com", resultado["url"])
-            
-        elif resultado["modo"] == "encontrado":
-            # Badge de confirmación
-            st.markdown(f"<div class='success-badge'>✅ Coincidencia verificada</div>", unsafe_allow_html=True)
-            
-            if resultado['imagen']:
-                st.image(resultado['imagen'], use_column_width=True)
-            
-            st.markdown(f"### {resultado['titulo']}")
-            st.markdown(f"<div class='price-tag'>{resultado['precio']}</div>", unsafe_allow_html=True)
-            
             st.markdown(f"""
-            <div class='info-box'>
-                <b>🏷️ Modelo:</b> {resultado['modelo']}<br>
-                <small style='color:gray'>SKU Buscado: {codigo_input}</small>
+            <div class='m3-card'>
+                <div class='headline-small'>No hubo match exacto</div>
+                <div class='body-medium' style='margin-top: 8px;'>El código <b>{codigo_input}</b> no aparece directamente, pero puede estar en recomendados.</div>
+                <br>
+                <a href='{resultado["url"]}' target='_blank' style='text-decoration: none; color: #000000; font-weight: 500;'>
+                    🔎 Ver resultados en Depofit &rarr;
+                </a>
             </div>
             """, unsafe_allow_html=True)
             
-            st.write("")
-            st.link_button("🔗 Ir al Producto", resultado['url'])
+        elif resultado["modo"] == "encontrado":
+            # --- TARJETA DE RESULTADO PRINCIPAL ---
+            st.markdown(f"""
+            <div class='m3-card'>
+                <!-- Chip de Estado -->
+                <div class='m3-chip'>
+                    <span class='m3-chip-icon'>✓</span> Verificado
+                </div>
+                
+                <!-- Título -->
+                <div class='headline-small'>{resultado['titulo']}</div>
+                
+                <!-- Precio Display -->
+                <div class='display-large'>{resultado['precio']}</div>
+                
+                <!-- Detalles en superficie más oscura/variante -->
+                <div style='background-color: #FFFFFF; padding: 16px; border-radius: 12px; margin-top: 16px;'>
+                    <div class='body-medium'><b>Modelo:</b> {resultado['modelo']}</div>
+                    <div class='body-medium' style='color: #999;'>SKU: {codigo_input}</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Imagen fuera de la tarjeta de texto, para que luzca grande (estilo Instagram/M3)
+            if resultado['imagen']:
+                st.image(resultado['imagen'], use_column_width=True)
+            
+            # Botón flotante simulado (Link final)
+            st.markdown(f"""
+            <div style='text-align: center; margin-top: 20px;'>
+                <a href='{resultado["url"]}' target='_blank' 
+                   style='background-color: #E8DEF8; color: #1D192B; padding: 12px 24px; border-radius: 100px; text-decoration: none; font-weight: 500; font-size: 14px;'>
+                   Abrir en Web Oficial ↗
+                </a>
+            </div>
+            """, unsafe_allow_html=True)
 
-st.markdown("---")
-st.caption("v4.0 • Verificación de Resultados")
+st.write("")
+st.write("")
+st.markdown("<div style='text-align: center; color: #CCC; font-size: 12px;'>M3 Expressive UI • v5.0</div>", unsafe_allow_html=True)
