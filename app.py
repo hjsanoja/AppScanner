@@ -53,11 +53,23 @@ st.markdown("""
         box-shadow: 0px 4px 8px rgba(0,0,0,0.2);
         transform: translateY(-1px);
     }
+    /* Tarjeta general para comparación */
     .m3-card {
         background-color: #F3F6FC;
         border-radius: 24px;
         padding: 24px;
         margin-bottom: 16px;
+    }
+    /* Contenedor específico para cada tienda en la comparación */
+    .store-card {
+        background-color: #FFFFFF; /* Más claro para destacar */
+        border-radius: 12px;
+        padding: 15px;
+        margin-top: 10px;
+        border: 1px solid #E0E0E0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
     }
     .display-large {
         font-size: 57px;
@@ -90,6 +102,15 @@ st.markdown("""
         margin-bottom: 16px;
         gap: 8px;
     }
+    .price-value {
+        font-size: 1.8em;
+        font-weight: 700;
+        color: #2E7D32; /* Verde para destacar el precio */
+    }
+    .error-tag {
+        color: #D32F2F;
+        font-weight: 500;
+    }
     .warning-card {
         background-color: #FFEBEE;
         color: #B71C1C;
@@ -121,22 +142,16 @@ def leer_codigo_de_imagen(image_file):
         st.error(f"Error leyendo imagen: {e}")
     return None
 
-# --- LÓGICA DE SCRAPING ---
-def buscar_producto(sku):
-    """Realiza la búsqueda en Depofit, verifica y extrae los datos."""
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    base_url = "https://depofit.com"
+# --- LÓGICA DE SCRAPING DEPFIT ---
+def buscar_depofit(sku, headers, base_url="https://depofit.com"):
     sku_buscado = normalizar_texto(sku)
-    url_busqueda = f"https://depofit.com/search?q={sku}"
-    
+    url_busqueda = f"{base_url}/search?q={sku}"
+    resultado = {"store": "Depofit.com", "status": "No Encontrado", "price": "---", "url": url_busqueda, "model": "N/A", "title": "N/A"}
+
     try:
-        # Paso 1: Buscar en la página de resultados
         response_busqueda = requests.get(url_busqueda, headers=headers)
         tree_busqueda = html.fromstring(response_busqueda.content)
         
-        # Encuentra posibles enlaces de productos (excluyendo menú)
         candidatos = tree_busqueda.xpath('//main//a[contains(@href, "/products/")]/@href')
         if not candidatos:
             candidatos = tree_busqueda.xpath('//body//a[contains(@href, "/products/")]/@href')
@@ -150,73 +165,118 @@ def buscar_producto(sku):
                 seen.add(full_url)
         
         if not urls_unicas:
-            return {"modo": "busqueda_externa", "url": url_busqueda}
+            return resultado
 
-        # Paso 2: Verificar cada producto candidato
-        for i, url_producto in enumerate(urls_unicas[:3]): # Solo revisamos los 3 primeros
+        for url_producto in urls_unicas[:3]: 
             page = requests.get(url_producto, headers=headers)
             tree = html.fromstring(page.content)
             
-            titulo = tree.xpath('//h1/text()')
-            titulo_texto = titulo[0].strip() if titulo else ""
-            
+            titulo_texto = tree.xpath('//h1/text()')[0].strip() if tree.xpath('//h1/text()') else ""
             modelo_nodo = tree.xpath('//li[contains(., "Modelo")]//text()')
             modelo_texto = "".join(modelo_nodo).replace("Modelo:", "").replace("Modelo", "").strip() if modelo_nodo else ""
-            texto_pagina = page.text.lower()
             
-            es_match = False
-            # Criterios de coincidencia (más estricto)
-            if sku_buscado in normalizar_texto(modelo_texto): es_match = True
-            elif sku_buscado in normalizar_texto(titulo_texto): es_match = True
-            elif sku_buscado in normalizar_texto(url_producto): es_match = True
-            elif texto_pagina.count(sku_buscado) > 0: es_match = True
+            es_match = (sku_buscado in normalizar_texto(modelo_texto) or 
+                        sku_buscado in normalizar_texto(titulo_texto) or 
+                        sku_buscado in normalizar_texto(url_producto))
             
             if es_match:
-                # Si hay coincidencia, extraemos y retornamos
-                return extraer_precio_e_imagen(tree, url_producto, titulo_texto, modelo_texto, sku)
+                # Extracción de Precio (Estrategia Meta Data)
+                meta_precio = tree.xpath('//meta[@property="og:price:amount"]/@content | //meta[@property="product:price:amount"]/@content')
+                meta_moneda = tree.xpath('//meta[@property="og:price:currency"]/@content')
+                price_value = meta_precio[0] if meta_precio else "---"
+                currency_symbol = meta_moneda[0] if meta_moneda else "$"
+                
+                resultado['status'] = "Encontrado"
+                resultado['price'] = f"{currency_symbol} {price_value}"
+                resultado['url'] = url_producto
+                resultado['model'] = modelo_texto
+                resultado['title'] = titulo_texto
+                
+                # Imagen (Solo la extraemos de Depofit para la tarjeta principal)
+                imagen = tree.xpath('//meta[@property="og:image"]/@content')
+                resultado['image'] = imagen[0] if imagen else None
+                return resultado
         
-        # Si ningún producto de los primeros 3 coincidió
-        return {"modo": "no_encontrado_exacto", "url": url_busqueda}
+        return resultado
+    except Exception as e:
+        resultado['status'] = f"Error: {e.__class__.__name__}"
+        return resultado
+
+# --- LÓGICA DE SCRAPING PLANETA SPORTS ---
+def buscar_planetasports(sku, headers):
+    base_url = "https://planetasports.com.ve"
+    url_busqueda = f"{base_url}/category.php?keywords={sku}&search_in_description=1&provider=PlanetaSportsOfficial"
+    resultado = {"store": "PlanetaSports.com.ve", "status": "No Encontrado", "price": "---", "url": url_busqueda, "model": "N/A", "title": "N/A"}
+    
+    try:
+        response = requests.get(url_busqueda, headers=headers)
+        tree = html.fromstring(response.content)
+
+        # Buscamos el primer resultado de producto en la página de categoría
+        # NOTA: Utilizamos la clase '.box-product' que es común en este tipo de tiendas.
+        producto_encontrado = tree.xpath('//div[contains(@class, "box-product")]/div/a/@href')
+        
+        if not producto_encontrado:
+             return resultado
+        
+        # Obtenemos la URL absoluta del primer producto
+        url_producto = urljoin(base_url, producto_encontrado[0])
+        
+        # Accedemos a la página del producto para extraer los detalles
+        page_producto = requests.get(url_producto, headers=headers)
+        tree_producto = html.fromstring(page_producto.content)
+        
+        # 1. Extracción del Precio (Buscamos la clase de precio o el ID)
+        # Basado en tiendas similares, buscamos el precio destacado
+        precio_nodo = tree_producto.xpath('//div[contains(@class, "product-info")]//div[contains(@class, "price")]/span/text()')
+        
+        # 2. Extracción de Título
+        titulo_nodo = tree_producto.xpath('//h1/text()')
+        
+        # 3. Extracción de Modelo/SKU (Suele estar en la descripción/detalles)
+        # Buscamos en el div de detalles por el SKU
+        detalles_nodo = tree_producto.xpath('//div[contains(@class, "product-info")]//div[contains(text(), "SKU")]/text() | //div[contains(@class, "product-info")]//div[contains(text(), "Referencia")]/text()')
+        
+        price_value = precio_nodo[0].strip() if precio_nodo else "---"
+        title_value = titulo_nodo[0].strip() if titulo_nodo else "Título no detectado"
+        model_value = next((d.strip() for d in detalles_nodo if sku in d), 'No especificado')
+        
+        resultado['status'] = "Encontrado"
+        resultado['price'] = price_value
+        resultado['url'] = url_producto
+        resultado['model'] = model_value
+        resultado['title'] = title_value
+        
+        return resultado
 
     except Exception as e:
-        return {"modo": "error", "mensaje": f"Error técnico: {str(e)}"}
+        resultado['status'] = f"Error: {e.__class__.__name__}"
+        return resultado
 
-def extraer_precio_e_imagen(tree, url, titulo, modelo, sku_original):
-    """Extrae precio, imagen y modelo de la página de un producto."""
-    datos = {"modo": "encontrado", "url": url, "titulo": titulo, "modelo": modelo}
+# --- FUNCIÓN PRINCIPAL DE BÚSQUEDA Y COMPARACIÓN ---
+def buscar_y_comparar(sku):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
     
-    precio_encontrado = None
-    # 1. Metadatos (Estrategia más fiable para el precio)
-    meta_precio = tree.xpath('//meta[@property="og:price:amount"]/@content | //meta[@property="product:price:amount"]/@content')
-    meta_moneda = tree.xpath('//meta[@property="og:price:currency"]/@content')
+    # Ejecutamos búsquedas en paralelo
+    depofit_data = buscar_depofit(sku, headers)
+    planeta_data = buscar_planetasports(sku, headers)
     
-    if meta_precio:
-        simbolo = meta_moneda[0] if meta_moneda else "$"
-        precio_encontrado = f"{simbolo} {meta_precio[0]}"
+    # Consolidamos los resultados
+    resultados = {
+        "sku": sku,
+        "depofit": depofit_data,
+        "planeta": planeta_data
+    }
     
-    # 2. Fallback visual para el precio
-    if not precio_encontrado:
-        precios_oferta = tree.xpath('//span[contains(@class, "price-item--sale")]/text()')
-        if precios_oferta: precio_encontrado = precios_oferta[0].strip()
-            
-    if not precio_encontrado:
-        precios = tree.xpath('//span[contains(@class, "price")]/text()')
-        precios_limpios = [p.strip() for p in precios if "$" in p]
-        precio_encontrado = precios_limpios[0] if precios_limpios else "---"
-
-    datos['precio'] = precio_encontrado
-    
-    # Imagen (Metadatos)
-    imagen = tree.xpath('//meta[@property="og:image"]/@content')
-    datos['imagen'] = imagen[0] if imagen else None
-    
-    return datos
+    return resultados
 
 # --- INTERFAZ DE USUARIO (UI) ---
 
-st.markdown("<h2 style='text-align: center; font-weight: 700; margin-bottom: 20px;'>DepoScanner</h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align: center; font-weight: 700; margin-bottom: 20px;'>DepoScanner Pro 👟</h2>", unsafe_allow_html=True)
 
-# --- SECCIÓN DE CÁMARA ---
+# --- SECCIÓN DE CÁMARA (Lógica de escaneo) ---
 with st.expander("📸 Abrir Escáner de Cámara"):
     imagen_camara = st.camera_input("Toma una foto clara del código")
 
@@ -234,61 +294,93 @@ if imagen_camara:
 # --- SECCIÓN DE BÚSQUEDA ---
 valor_inicial = codigo_detectado if codigo_detectado else ""
 
-codigo_input = st.text_input("", value=valor_inicial, placeholder="Escribe el SKU o escanea...", label_visibility="collapsed")
+codigo_input = st.text_input("", value=valor_inicial, placeholder="Escribe el SKU o escanea (Ej: 3ME10120664)...", label_visibility="collapsed")
 
 st.write("") 
 
-boton_presionado = st.button("Buscar Producto")
+boton_presionado = st.button("Buscar y Comparar Precios")
 
-debe_buscar = boton_presionado or (codigo_detectado is not None)
+debe_buscar = boton_presionado or (codigo_detectado is not None and codigo_detectado != st.session_state.get('last_searched_code'))
 
-if debe_buscar:
-    if not codigo_input:
-        st.markdown("<div class='warning-card'>⚠️ Escribe o escanea un código</div>", unsafe_allow_html=True)
+if debe_buscar and codigo_input:
+    st.session_state['last_searched_code'] = codigo_input # Guarda el código buscado para evitar doble disparo de cámara
+    
+    with st.spinner('Buscando información en ambas tiendas...'):
+        resultados_comp = buscar_y_comparar(codigo_input)
+    
+    st.write("") 
+    
+    # --- MOSTRAR RESULTADOS CONSOLIDADOS ---
+    
+    depofit_data = resultados_comp['depofit']
+    planeta_data = resultados_comp['planeta']
+    
+    # 1. TARJETA PRINCIPAL (Usamos Depofit como fuente de imagen y título principal si está disponible)
+    fuente_principal = depofit_data if depofit_data['status'] == 'Encontrado' else planeta_data
+    
+    if fuente_principal['status'] == 'Encontrado':
+        st.markdown(f"""
+        <div class='m3-card'>
+            <div class='headline-small'>{fuente_principal['title']}</div>
+            <div class='body-medium' style='color: #999;'>Modelo Buscado: <b>{codigo_input}</b></div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if 'image' in fuente_principal and fuente_principal['image']:
+            st.image(fuente_principal['image'], use_column_width=True)
+
     else:
-        with st.spinner('Buscando información...'):
-            resultado = buscar_producto(codigo_input)
-        
-        st.write("") 
-        
-        if resultado["modo"] == "error":
-            st.error(resultado["mensaje"])
-            
-        elif resultado["modo"] == "busqueda_externa" or resultado["modo"] == "no_encontrado_exacto":
-            st.markdown(f"""<div class='m3-card'>
-<div class='headline-small'>No hubo match exacto</div>
-<div class='body-medium' style='margin-top: 8px;'>El código <b>{codigo_input}</b> no aparece directamente.</div>
-<br>
-<a href='{resultado["url"]}' target='_blank' style='text-decoration: none; color: #000000; font-weight: 500;'>
-🔎 Ver resultados en Depofit &rarr;
-</a>
-</div>""", unsafe_allow_html=True)
-            
-        elif resultado["modo"] == "encontrado":
-            # --- TARJETA DE RESULTADO PRINCIPAL ---
-            st.markdown(f"""<div class='m3-card'>
-<div class='m3-chip'>
-<span class='m3-chip-icon'>✓</span> Verificado
-</div>
-<div class='headline-small'>{resultado['titulo']}</div>
-<div class='display-large'>{resultado['precio']}</div>
-<div style='background-color: #FFFFFF; padding: 16px; border-radius: 12px; margin-top: 16px;'>
-<div class='body-medium'><b>Modelo:</b> {resultado['modelo']}</div>
-<div class='body-medium' style='color: #999;'>SKU: {codigo_input}</div>
-</div>
-</div>""", unsafe_allow_html=True)
-            
-            if resultado['imagen']:
-                st.image(resultado['imagen'], use_column_width=True)
-            
-            # Botón flotante simulado (Link final)
-            st.markdown(f"""<div style='text-align: center; margin-top: 20px;'>
-<a href='{resultado["url"]}' target='_blank' 
-style='background-color: #E8DEF8; color: #1D192B; padding: 12px 24px; border-radius: 100px; text-decoration: none; font-weight: 500; font-size: 14px;'>
-Abrir en Web Oficial ↗
-</a>
+         st.markdown(f"""<div class='m3-card'>
+<div class='headline-small'>No se encontró coincidencia en ninguna tienda.</div>
+<div class='body-medium' style='margin-top: 8px;'>El código <b>{codigo_input}</b> no fue verificado.</div>
 </div>""", unsafe_allow_html=True)
 
-st.write("")
-st.write("")
-st.markdown("<div style='text-align: center; color: #CCC; font-size: 12px;'>M3 Expressive UI • v6.0 Camera Enabled</div>", unsafe_allow_html=True)
+    # 2. COMPARACIÓN DE PRECIOS
+    
+    st.markdown("### Comparativa de Precios")
+    
+    # Resultado Depofit
+    if depofit_data['status'] == 'Encontrado':
+        price_html = f"<span class='price-value'>{depofit_data['price']}</span>"
+        status_html = "Encontrado"
+    else:
+        price_html = f"<span class='error-tag'>{depofit_data['status']}</span>"
+        status_html = "No Encontrado"
+        
+    st.markdown(f"""
+    <div class='store-card'>
+        <div style='font-weight: 500;'>{depofit_data['store']}</div>
+        <div style='text-align: right;'>
+            {price_html}<br>
+            <a href='{depofit_data['url']}' target='_blank' style='font-size: 0.8em;'>Ver</a>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Resultado Planeta Sports
+    if planeta_data['status'] == 'Encontrado':
+        price_html = f"<span class='price-value'>{planeta_data['price']}</span>"
+        status_html = "Encontrado"
+    else:
+        price_html = f"<span class='error-tag'>{planeta_data['status']}</span>"
+        status_html = "No Encontrado"
+        
+    st.markdown(f"""
+    <div class='store-card'>
+        <div style='font-weight: 500;'>{planeta_data['store']}</div>
+        <div style='text-align: right;'>
+            {price_html}<br>
+            <a href='{planeta_data['url']}' target='_blank' style='font-size: 0.8em;'>Ver</a>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+    st.markdown("---")
+    st.caption("v7.0 • Comparativa Multi-Tienda")
+
+else:
+    # Esto es solo para la carga inicial o si se borra el código
+    st.session_state['last_searched_code'] = None
+
+st.markdown("<div style='text-align: center; color: #CCC; font-size: 12px;'>M3 Expressive UI</div>", unsafe_allow_html=True)
