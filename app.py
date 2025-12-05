@@ -144,7 +144,15 @@ def leer_codigo_de_imagen(image_file):
 
 # --- LÓGICA DE SCRAPING DEPFIT ---
 def buscar_depofit(sku, headers, base_url="https://depofit.com"):
+    # Limpiamos el SKU de cualquier código de color/talla que pueda tener el usuario
     sku_buscado = normalizar_texto(sku)
+    
+    # -------------------------------------------------------------
+    # NUEVA VERIFICACIÓN FLEXIBLE: Busca el SKU en el texto de la página
+    # ignorando caracteres como guiones o puntos que el usuario no ingresó.
+    # -------------------------------------------------------------
+    sku_regex = re.escape(sku_buscado).replace(r'\-', '[\-\s]?').replace(r'\.', '[\.\s]?')
+    
     url_busqueda = f"{base_url}/search?q={sku}"
     resultado = {"store": "Depofit.com", "status": "No Encontrado", "price": "---", "url": url_busqueda, "model": "N/A", "title": "N/A"}
 
@@ -175,9 +183,10 @@ def buscar_depofit(sku, headers, base_url="https://depofit.com"):
             modelo_nodo = tree.xpath('//li[contains(., "Modelo")]//text()')
             modelo_texto = "".join(modelo_nodo).replace("Modelo:", "").replace("Modelo", "").strip() if modelo_nodo else ""
             
-            es_match = (sku_buscado in normalizar_texto(modelo_texto) or 
-                        sku_buscado in normalizar_texto(titulo_texto) or 
-                        sku_buscado in normalizar_texto(url_producto))
+            texto_completo_producto = normalizar_texto(titulo_texto + " " + modelo_texto)
+            
+            # NUEVA VERIFICACIÓN: Busca el SKU dentro de cualquier texto del producto
+            es_match = bool(re.search(sku_regex, texto_completo_producto))
             
             if es_match:
                 # Extracción de Precio (Estrategia Meta Data)
@@ -192,7 +201,6 @@ def buscar_depofit(sku, headers, base_url="https://depofit.com"):
                 resultado['model'] = modelo_texto
                 resultado['title'] = titulo_texto
                 
-                # Imagen (Solo la extraemos de Depofit para la tarjeta principal)
                 imagen = tree.xpath('//meta[@property="og:image"]/@content')
                 resultado['image'] = imagen[0] if imagen else None
                 return resultado
@@ -207,13 +215,13 @@ def buscar_planetasports(sku, headers):
     base_url = "https://planetasports.com.ve"
     url_busqueda = f"{base_url}/category.php?keywords={sku}&search_in_description=1&provider=PlanetaSportsOfficial"
     resultado = {"store": "PlanetaSports.com.ve", "status": "No Encontrado", "price": "---", "url": url_busqueda, "model": "N/A", "title": "N/A"}
+    sku_buscado = normalizar_texto(sku)
     
     try:
         response = requests.get(url_busqueda, headers=headers)
         tree = html.fromstring(response.content)
 
-        # Buscamos el primer resultado de producto en la página de categoría
-        # NOTA: Utilizamos la clase '.box-product' que es común en este tipo de tiendas.
+        # Buscamos el primer resultado de producto
         producto_encontrado = tree.xpath('//div[contains(@class, "box-product")]/div/a/@href')
         
         if not producto_encontrado:
@@ -226,26 +234,33 @@ def buscar_planetasports(sku, headers):
         page_producto = requests.get(url_producto, headers=headers)
         tree_producto = html.fromstring(page_producto.content)
         
-        # 1. Extracción del Precio (Buscamos la clase de precio o el ID)
-        # Basado en tiendas similares, buscamos el precio destacado
+        # 1. Extracción del Precio
         precio_nodo = tree_producto.xpath('//div[contains(@class, "product-info")]//div[contains(@class, "price")]/span/text()')
         
         # 2. Extracción de Título
         titulo_nodo = tree_producto.xpath('//h1/text()')
         
-        # 3. Extracción de Modelo/SKU (Suele estar en la descripción/detalles)
-        # Buscamos en el div de detalles por el SKU
-        detalles_nodo = tree_producto.xpath('//div[contains(@class, "product-info")]//div[contains(text(), "SKU")]/text() | //div[contains(@class, "product-info")]//div[contains(text(), "Referencia")]/text()')
+        # 3. Extracción de Modelo/SKU (Referencia)
+        # Buscamos donde diga "estilo" o "referencia"
+        detalles_nodo = tree_producto.xpath('//div[contains(@class, "product-info")]//div[contains(text(), "estilo")]/text() | //div[contains(@class, "product-info")]//div[contains(text(), "Referencia")]/text()')
         
         price_value = precio_nodo[0].strip() if precio_nodo else "---"
         title_value = titulo_nodo[0].strip() if titulo_nodo else "Título no detectado"
-        model_value = next((d.strip() for d in detalles_nodo if sku in d), 'No especificado')
         
-        resultado['status'] = "Encontrado"
-        resultado['price'] = price_value
-        resultado['url'] = url_producto
-        resultado['model'] = model_value
-        resultado['title'] = title_value
+        # Lógica mejorada para extraer solo la parte del código base
+        model_value_full = next((d.strip() for d in detalles_nodo), 'No especificado')
+        
+        # Regex: Busca el SKU que ingresaste dentro de la cadena de estilo (ej. "3ME10120664 WHT-BLK")
+        # Esto asegura que si el SKU base existe, lo consideramos un match.
+        match_estilo = re.search(re.escape(sku_buscado), normalizar_texto(model_value_full))
+
+        if match_estilo:
+            resultado['status'] = "Encontrado"
+            resultado['price'] = price_value
+            resultado['url'] = url_producto
+            # Mostramos el SKU base más los códigos de color si existen
+            resultado['model'] = model_value_full.replace("estilo:", "").strip()
+            resultado['title'] = title_value
         
         return resultado
 
@@ -300,10 +315,14 @@ st.write("")
 
 boton_presionado = st.button("Buscar y Comparar Precios")
 
-debe_buscar = boton_presionado or (codigo_detectado is not None and codigo_detectado != st.session_state.get('last_searched_code'))
+# Usamos st.session_state para manejar el estado del código detectado y evitar doble disparo
+if 'last_searched_code' not in st.session_state:
+    st.session_state['last_searched_code'] = None
+
+debe_buscar = boton_presionado or (codigo_detectado is not None and codigo_detectado != st.session_state['last_searched_code'])
 
 if debe_buscar and codigo_input:
-    st.session_state['last_searched_code'] = codigo_input # Guarda el código buscado para evitar doble disparo de cámara
+    st.session_state['last_searched_code'] = codigo_input # Guarda el código buscado
     
     with st.spinner('Buscando información en ambas tiendas...'):
         resultados_comp = buscar_y_comparar(codigo_input)
@@ -315,10 +334,14 @@ if debe_buscar and codigo_input:
     depofit_data = resultados_comp['depofit']
     planeta_data = resultados_comp['planeta']
     
-    # 1. TARJETA PRINCIPAL (Usamos Depofit como fuente de imagen y título principal si está disponible)
-    fuente_principal = depofit_data if depofit_data['status'] == 'Encontrado' else planeta_data
+    # Determinamos la fuente principal para imagen/título
+    fuente_principal = None
+    if depofit_data['status'] == 'Encontrado':
+        fuente_principal = depofit_data
+    elif planeta_data['status'] == 'Encontrado':
+        fuente_principal = planeta_data
     
-    if fuente_principal['status'] == 'Encontrado':
+    if fuente_principal and fuente_principal['status'] == 'Encontrado':
         st.markdown(f"""
         <div class='m3-card'>
             <div class='headline-small'>{fuente_principal['title']}</div>
@@ -342,10 +365,8 @@ if debe_buscar and codigo_input:
     # Resultado Depofit
     if depofit_data['status'] == 'Encontrado':
         price_html = f"<span class='price-value'>{depofit_data['price']}</span>"
-        status_html = "Encontrado"
     else:
         price_html = f"<span class='error-tag'>{depofit_data['status']}</span>"
-        status_html = "No Encontrado"
         
     st.markdown(f"""
     <div class='store-card'>
@@ -360,10 +381,8 @@ if debe_buscar and codigo_input:
     # Resultado Planeta Sports
     if planeta_data['status'] == 'Encontrado':
         price_html = f"<span class='price-value'>{planeta_data['price']}</span>"
-        status_html = "Encontrado"
     else:
         price_html = f"<span class='error-tag'>{planeta_data['status']}</span>"
-        status_html = "No Encontrado"
         
     st.markdown(f"""
     <div class='store-card'>
@@ -377,10 +396,14 @@ if debe_buscar and codigo_input:
 
 
     st.markdown("---")
-    st.caption("v7.0 • Comparativa Multi-Tienda")
+    st.caption("v8.0 • Regex Flexible SKU")
 
+# Si el código detectado existe pero el botón no fue presionado (evita que se recargue el resultado)
+elif codigo_detectado is not None and codigo_detectado == st.session_state.get('last_searched_code'):
+    # No hace nada, espera a que el usuario presione buscar o cambie el código
+    pass
 else:
-    # Esto es solo para la carga inicial o si se borra el código
+    # Esto es solo para la carga inicial
     st.session_state['last_searched_code'] = None
 
 st.markdown("<div style='text-align: center; color: #CCC; font-size: 12px;'>M3 Expressive UI</div>", unsafe_allow_html=True)
