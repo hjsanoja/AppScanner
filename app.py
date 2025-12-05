@@ -4,7 +4,6 @@ from lxml import html
 from urllib.parse import urljoin
 import re
 from PIL import Image
-# Librerías para leer códigos de barras/QR (requiere libzbar0 en packages.txt)
 from pyzbar.pyzbar import decode
 import io
 
@@ -117,7 +116,6 @@ def leer_codigo_de_imagen(image_file):
         image = Image.open(image_file)
         codigos = decode(image)
         if codigos:
-            # Devuelve el primer código como cadena de texto
             return codigos[0].data.decode("utf-8")
     except Exception as e:
         st.error(f"Error leyendo imagen: {e}")
